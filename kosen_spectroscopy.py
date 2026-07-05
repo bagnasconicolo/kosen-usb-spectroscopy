@@ -19,6 +19,8 @@ import pickle
 import configparser
 from scipy.signal import find_peaks
 
+import smile_correction
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox, QCheckBox, QDoubleSpinBox,
@@ -93,6 +95,10 @@ class ThereminoSpectrometer:
         self.src_h = 1
         self.roi_x0 = 0  # Absolute left column of the current ROI (frame pixels)
 
+        # Smile (spectral line curvature) correction
+        self.smile = None            # smile_correction.SmileCorrection or None
+        self.smile_enabled = False   # apply to live frames when True
+
         # Calibration (like Module_Calibrations.vb)
         self.calib_bin = np.array([1000.0, 2000.0])  # Pixel positions
         self.calib_nm = np.array([436.0, 546.0])     # Wavelengths in nm
@@ -144,6 +150,11 @@ class ThereminoSpectrometer:
                 frame = cv2.flip(frame, 1)  # Flip horizontally
             if self.config.flip_v:
                 frame = cv2.flip(frame, 0)  # Flip vertically
+
+            # Smile correction: straighten curved spectral lines so the vertical
+            # ROI average stays sharp. Precomputed map -> single fast remap.
+            if self.smile_enabled and self.smile is not None and self.smile.matches(frame):
+                frame = self.smile.apply(frame)
 
             self.current_frame = frame
             return True
@@ -631,10 +642,10 @@ class ThereminoSpectrometryGUI(QMainWindow):
 
         # TOOLS MENU
         tools_menu = menubar.addMenu("Tools")
-        sensor_menu = tools_menu.addMenu("Sensor Type")
-        sensor_menu.addAction("Web Cam")
-        sensor_menu.addAction("TCD1304")
-        sensor_menu.addAction("TCD1254")
+
+        smile_action = tools_menu.addAction("Process static image (smile correction)…")
+        smile_action.triggered.connect(self.process_static_image)
+        tools_menu.addSeparator()
 
         trim_menu = tools_menu.addMenu("Trim points")
         trim_menu.addAction("Fluorescent 436 546")
@@ -799,6 +810,17 @@ class ThereminoSpectrometryGUI(QMainWindow):
         self.chk_flip_v = QCheckBox("Flip V")
         self.chk_flip_v.stateChanged.connect(lambda: setattr(self.config, 'flip_v', self.chk_flip_v.isChecked()))
         layout.addRow(self.chk_flip_h, self.chk_flip_v)
+
+        # Smile (line curvature) correction
+        self.btn_compute_smile = QPushButton("Compute smile map")
+        self.btn_compute_smile.setToolTip("Straighten curved spectral lines using the current frame")
+        self.btn_compute_smile.clicked.connect(self.compute_smile_map)
+        layout.addRow(self.btn_compute_smile)
+
+        self.chk_smile = QCheckBox("Apply smile correction")
+        self.chk_smile.setEnabled(False)
+        self.chk_smile.stateChanged.connect(self.toggle_smile)
+        layout.addRow(self.chk_smile)
 
         group.setLayout(layout)
         return group
@@ -1091,6 +1113,74 @@ class ThereminoSpectrometryGUI(QMainWindow):
         """Mouse moved on preview - show pixel coordinates"""
         # Could add slider visualization here
         pass
+
+    # ========================================================================
+    # SMILE (spectral line curvature) CORRECTION
+    # ========================================================================
+
+    def compute_smile_map(self):
+        """Build a smile-correction map from the current live frame."""
+        frame = self.spectrometer.current_frame
+        if frame is None:
+            QMessageBox.warning(self, "Smile correction",
+                                "No frame available. Connect the camera and aim at "
+                                "a line-rich source (e.g. a CFL lamp) first.")
+            return
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.statusBar().showMessage("Computing smile map...")
+        QApplication.processEvents()
+
+        corr, msg = smile_correction.compute_smile_correction(rgb)
+        if corr is None:
+            self.chk_smile.setEnabled(False)
+            self.chk_smile.setChecked(False)
+            QMessageBox.warning(self, "Smile correction failed", msg)
+            self.statusBar().showMessage("Smile map failed")
+            return
+
+        self.spectrometer.smile = corr
+        self.chk_smile.setEnabled(True)
+        self.chk_smile.setChecked(True)   # enables and applies via toggle_smile
+        QMessageBox.information(self, "Smile correction", msg)
+        self.statusBar().showMessage(msg)
+
+    def toggle_smile(self):
+        self.spectrometer.smile_enabled = self.chk_smile.isChecked()
+        state = "ON" if self.chk_smile.isChecked() else "OFF"
+        self.statusBar().showMessage(f"Smile correction {state}")
+
+    def process_static_image(self):
+        """Load an image file, straighten its spectral lines, save the result."""
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Select spectrum image", self.output_folder,
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All Files (*)"
+        )
+        if not filename:
+            return
+
+        img_bgr = cv2.imread(filename, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            QMessageBox.warning(self, "Error", f"Could not read image:\n{filename}")
+            return
+
+        rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        self.statusBar().showMessage("Straightening image...")
+        QApplication.processEvents()
+
+        corrected, before, after, msg = smile_correction.straighten_image(rgb)
+        if corrected is None:
+            QMessageBox.warning(self, "Smile correction failed", msg)
+            return
+
+        stem = Path(filename).with_suffix("")
+        out_path = f"{stem}_straightened.png"
+        cv2.imwrite(out_path, cv2.cvtColor(corrected, cv2.COLOR_RGB2BGR))
+
+        self.statusBar().showMessage(f"Saved {Path(out_path).name}")
+        QMessageBox.information(
+            self, "Smile correction",
+            f"{msg}\n\nStraightened image saved to:\n{out_path}")
 
     def _set_plot_cursor_visible(self, visible: bool):
         self.vline.setVisible(visible)
