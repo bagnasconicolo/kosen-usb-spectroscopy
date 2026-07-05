@@ -25,7 +25,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox, QCheckBox, QDoubleSpinBox,
     QGroupBox, QFormLayout, QGridLayout, QTextEdit, QFileDialog, QLineEdit,
-    QMenuBar, QMenu, QMessageBox, QToolBar, QStatusBar, QScrollArea, QSizePolicy
+    QMenuBar, QMenu, QMessageBox, QToolBar, QStatusBar, QScrollArea, QSizePolicy,
+    QDialog, QSlider
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QRect, QEvent
 from PyQt6.QtGui import QImage, QPixmap, QFont, QColor, QAction, QIcon, QPainter, QPen
@@ -560,6 +561,161 @@ class AcquisitionThread(QThread):
 
 
 # ============================================================================
+# VIDEO SETTINGS DIALOG (UVC camera controls via OpenCV)
+# ============================================================================
+
+class VideoSettingsDialog(QDialog):
+    """Secondary, non-modal window exposing UVC camera controls.
+
+    Reads/writes OpenCV CAP_PROP_* on the live VideoCapture. What is actually
+    adjustable depends on the camera and OS driver; unsupported controls are
+    hidden. Disabling auto-exposure is what makes manual Exposure/Gain stick —
+    important for repeatable spectroscopy measurements.
+    """
+
+    # (label, CAP_PROP, preset_min, preset_max)
+    _SLIDERS = [
+        ("Exposure",   cv2.CAP_PROP_EXPOSURE,   -15, 15),
+        ("Gain",       cv2.CAP_PROP_GAIN,        0, 255),
+        ("Brightness", cv2.CAP_PROP_BRIGHTNESS,  0, 255),
+        ("Contrast",   cv2.CAP_PROP_CONTRAST,    0, 255),
+        ("Saturation", cv2.CAP_PROP_SATURATION,  0, 255),
+        ("Gamma",      cv2.CAP_PROP_GAMMA,       0, 255),
+        ("Sharpness",  cv2.CAP_PROP_SHARPNESS,   0, 255),
+        ("WB temp",    cv2.CAP_PROP_WB_TEMPERATURE, 2000, 8000),
+    ]
+
+    def __init__(self, get_camera, parent=None):
+        super().__init__(parent)
+        self.get_camera = get_camera   # callable -> cv2.VideoCapture or None
+        self.setWindowTitle("Video Settings")
+        self.setMinimumWidth = 360
+        self._rows = []                # (prop, slider, value_label, is_float)
+        self._initial = {}             # prop -> value at open (for Reset)
+
+        layout = QVBoxLayout(self)
+
+        cam = self.get_camera()
+        if cam is None:
+            layout.addWidget(QLabel("Connect a camera first."))
+            return
+
+        # Auto-exposure toggle
+        self.chk_auto_exp = QCheckBox("Auto exposure")
+        self.chk_auto_exp.setChecked(self._read_auto(cv2.CAP_PROP_AUTO_EXPOSURE))
+        self.chk_auto_exp.stateChanged.connect(self._on_auto_exposure)
+        layout.addWidget(self.chk_auto_exp)
+
+        # Property sliders
+        grid = QGridLayout()
+        row = 0
+        for label, prop, lo, hi in self._SLIDERS:
+            cur = cam.get(prop)
+            if cur is None or cur == -1:
+                continue  # unsupported by this camera/driver
+            self._initial[prop] = cur
+
+            # Normalised (0..1) backends vs absolute-value backends
+            is_float = (-1.0 <= cur <= 1.0) and prop != cv2.CAP_PROP_WB_TEMPERATURE
+            if is_float:
+                smin, smax = (-1000, 1000) if lo < 0 else (0, 1000)
+                sval = int(round(cur * 1000))
+            else:
+                lo = min(lo, cur); hi = max(hi, cur)
+                smin, smax = int(lo), int(hi)
+                sval = int(round(cur))
+
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(smin, smax)
+            slider.setValue(max(smin, min(smax, sval)))
+            vlabel = QLabel(self._fmt(cur, is_float))
+            vlabel.setMinimumWidth(60)
+
+            slider.valueChanged.connect(
+                lambda v, p=prop, f=is_float, vl=vlabel: self._on_slider(p, v, f, vl))
+
+            grid.addWidget(QLabel(label), row, 0)
+            grid.addWidget(slider, row, 1)
+            grid.addWidget(vlabel, row, 2)
+            self._rows.append((prop, slider, vlabel, is_float))
+            row += 1
+        layout.addLayout(grid)
+
+        # Auto white balance toggle (if supported)
+        if cam.get(cv2.CAP_PROP_AUTO_WB) != -1:
+            self.chk_auto_wb = QCheckBox("Auto white balance")
+            self.chk_auto_wb.setChecked(bool(cam.get(cv2.CAP_PROP_AUTO_WB)))
+            self.chk_auto_wb.stateChanged.connect(
+                lambda: self._set(cv2.CAP_PROP_AUTO_WB,
+                                  1.0 if self.chk_auto_wb.isChecked() else 0.0))
+            layout.addWidget(self.chk_auto_wb)
+
+        if not self._rows:
+            layout.addWidget(QLabel("This camera/driver exposes no adjustable\n"
+                                    "controls through OpenCV on this system."))
+
+        # Buttons
+        btns = QHBoxLayout()
+        btn_reset = QPushButton("Reset")
+        btn_reset.clicked.connect(self._reset)
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        btns.addStretch()
+        btns.addWidget(btn_reset)
+        btns.addWidget(btn_close)
+        layout.addLayout(btns)
+
+        self._sync_slider_enabled()
+
+    # --- helpers ---
+    def _fmt(self, v, is_float):
+        return f"{v:.3f}" if is_float else f"{int(round(v))}"
+
+    def _set(self, prop, value):
+        cam = self.get_camera()
+        if cam is not None:
+            try:
+                cam.set(prop, float(value))
+            except Exception:
+                pass
+
+    def _on_slider(self, prop, sval, is_float, vlabel):
+        value = sval / 1000.0 if is_float else sval
+        self._set(prop, value)
+        vlabel.setText(self._fmt(value, is_float))
+
+    def _read_auto(self, prop):
+        cam = self.get_camera()
+        if cam is None:
+            return False
+        v = cam.get(prop)
+        # Common conventions: manual≈0.25 or 1 ; auto≈0.75 or 3
+        return v in (0.75, 3) or v >= 0.75
+
+    def _on_auto_exposure(self):
+        auto = self.chk_auto_exp.isChecked()
+        # Try both common driver conventions
+        self._set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75 if auto else 0.25)
+        self._set(cv2.CAP_PROP_AUTO_EXPOSURE, 3 if auto else 1)
+        self._sync_slider_enabled()
+
+    def _sync_slider_enabled(self):
+        """Exposure slider only bites when auto-exposure is off."""
+        auto = self.chk_auto_exp.isChecked()
+        for prop, slider, vlabel, _ in self._rows:
+            if prop == cv2.CAP_PROP_EXPOSURE:
+                slider.setEnabled(not auto)
+                vlabel.setEnabled(not auto)
+
+    def _reset(self):
+        for prop, slider, vlabel, is_float in self._rows:
+            if prop in self._initial:
+                v = self._initial[prop]
+                slider.setValue(int(round(v * 1000)) if is_float else int(round(v)))
+                self._set(prop, v)
+
+
+# ============================================================================
 # MAIN GUI WINDOW - Replica dell'originale
 # ============================================================================
 
@@ -854,6 +1010,10 @@ class ThereminoSpectrometryGUI(QMainWindow):
         self.btn_connect_webcam = QPushButton("Connect WebCam")
         self.btn_connect_webcam.clicked.connect(self.connect_webcam)
         layout.addWidget(self.btn_connect_webcam)
+
+        self.btn_video_settings = QPushButton("⚙ Video settings…")
+        self.btn_video_settings.clicked.connect(self.open_video_settings)
+        layout.addWidget(self.btn_video_settings)
 
         self.label_webcam_resolution = QLabel("Resolution: -")
         self.label_webcam_fps = QLabel("FPS: -")
@@ -1185,6 +1345,17 @@ class ThereminoSpectrometryGUI(QMainWindow):
                 self.acquisition_thread.start()
             else:
                 QMessageBox.warning(self, "Error", f"Failed to connect to USB Camera {device_id}")
+
+    def open_video_settings(self):
+        """Open the secondary UVC camera-controls window (non-modal)."""
+        if not self.is_connected or self.spectrometer.camera is None:
+            QMessageBox.information(self, "Video settings",
+                                    "Connect a camera first.")
+            return
+        # Keep a reference so the window isn't garbage-collected
+        self.video_settings_dialog = VideoSettingsDialog(
+            get_camera=lambda: self.spectrometer.camera, parent=self)
+        self.video_settings_dialog.show()
 
     def on_spectrum_ready(self, data):
         """Handle new spectrum"""
