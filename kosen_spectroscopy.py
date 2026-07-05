@@ -1034,6 +1034,19 @@ class ThereminoSpectrometryGUI(QMainWindow):
 
         # Camera preview section (40% height)
         preview_layout = QVBoxLayout()
+
+        # Zoomed ROI strip: exactly what feeds the spectrum, stretched to a
+        # fixed height so the bright band is easy to see/align. Visual aid only
+        # (does NOT change the spectrum data).
+        roi_strip_label = QLabel("ROI (zoom — what the spectrum is averaged from):")
+        roi_strip_label.setStyleSheet("font-weight: bold;")
+        preview_layout.addWidget(roi_strip_label)
+        self.label_roi_strip = QLabel()
+        self.label_roi_strip.setFixedHeight(70)
+        self.label_roi_strip.setStyleSheet("border: 2px solid #0066cc; background: black;")
+        self.label_roi_strip.setScaledContents(True)
+        preview_layout.addWidget(self.label_roi_strip)
+
         preview_label = QLabel("Camera Preview (with ROI):")
         preview_label.setStyleSheet("font-weight: bold;")
         preview_layout.addWidget(preview_label)
@@ -1132,6 +1145,10 @@ class ThereminoSpectrometryGUI(QMainWindow):
         roi_y0 = h - (h * self.config.start_y) // 1000 - (h * self.config.size_y) // 1000
         roi_y1 = h - (h * self.config.start_y) // 1000
 
+        # Zoomed ROI strip from the CLEAN frame (before the green box). Same
+        # pixels the spectrum averages, stretched vertically to a fixed height.
+        self._update_roi_strip(rgb, roi_x0, roi_y0, roi_x1, roi_y1)
+
         # Draw ROI box in green (in image space - always correct)
         cv2.rectangle(frame_with_roi, (roi_x0, roi_y0), (roi_x1, roi_y1), (0, 255, 0), 2)
         cv2.putText(frame_with_roi, "ROI", (roi_x0 + 5, roi_y0 + 20),
@@ -1147,6 +1164,23 @@ class ThereminoSpectrometryGUI(QMainWindow):
         pixmap = QPixmap.fromImage(qt_image)
         scaled_pixmap = pixmap.scaledToHeight(350, Qt.TransformationMode.SmoothTransformation)
         self.label_preview.set_frame_pixmap(scaled_pixmap, w, h)
+
+    def _update_roi_strip(self, rgb, x0, y0, x1, y1):
+        """Show the ROI band stretched to a fixed height (visual aid only)."""
+        h, w = rgb.shape[:2]
+        x0 = max(0, min(w - 1, x0)); x1 = max(x0 + 1, min(w, x1))
+        y0 = max(0, min(h - 1, y0)); y1 = max(y0 + 1, min(h, y1))
+        band = rgb[y0:y1, x0:x1]
+        if band.size == 0:
+            return
+        # Stretch to the strip's fixed height, keep full ROI width
+        target_h = self.label_roi_strip.height() or 70
+        target_w = max(band.shape[1], 400)
+        strip = cv2.resize(band, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+        strip = np.ascontiguousarray(strip)
+        img = QImage(strip.data, strip.shape[1], strip.shape[0],
+                     3 * strip.shape[1], QImage.Format.Format_RGB888)
+        self.label_roi_strip.setPixmap(QPixmap.fromImage(img))
 
     def on_preview_clicked(self, px: int, py: int):
         """Click on preview to set ROI. px,py are ORIGINAL frame coords."""
