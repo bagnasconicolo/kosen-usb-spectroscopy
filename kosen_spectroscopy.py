@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QRect, QEvent
 from PyQt6.QtGui import QImage, QPixmap, QFont, QColor, QAction, QIcon, QPainter, QPen
 import pyqtgraph as pg
+import pyqtgraph.exporters  # noqa: F401 (needed so pg.exporters is available)
 
 
 # ============================================================================
@@ -544,14 +545,19 @@ class ThereminoSpectrometryGUI(QMainWindow):
         icon_path = Path(__file__).parent / "icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        # Make window responsive - 85% of screen
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(
-            int(screen.width() * 0.075),
-            int(screen.height() * 0.05),
-            int(screen.width() * 0.85),
-            int(screen.height() * 0.9)
-        )
+        # Make window responsive - 85% of screen (fall back to a fixed size
+        # if no screen is reported, e.g. some headless/remote setups)
+        _pscreen = QApplication.primaryScreen()
+        if _pscreen is not None:
+            screen = _pscreen.geometry()
+            self.setGeometry(
+                int(screen.width() * 0.075),
+                int(screen.height() * 0.05),
+                int(screen.width() * 0.85),
+                int(screen.height() * 0.9)
+            )
+        else:
+            self.resize(1280, 800)
 
         # Theme colors
         self.setStyleSheet("""
