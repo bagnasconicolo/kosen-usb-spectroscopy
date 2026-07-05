@@ -48,6 +48,11 @@ class SpectrometerConfig:
     sensor_type: SensorTypes = SensorTypes.WEBCAM
     sensor_num_samples: int = 3600
 
+    # Requested camera capture resolution (0 = request the sensor's maximum).
+    # Higher width = more spectral samples = higher spectral resolution.
+    cam_width: int = 0
+    cam_height: int = 0
+
     # ROI
     start_x: int = 0
     end_x: int = 1000
@@ -111,19 +116,42 @@ class ThereminoSpectrometer:
         self.last_saved_file = ""
 
     def connect_webcam(self, device_id: int = 0) -> bool:
-        """Connect to WebCam"""
+        """Connect to WebCam at the highest useful resolution.
+
+        Spectral resolution == number of horizontal pixels the spectrum spans,
+        so we avoid downgrading the sensor. Many USB webcams only expose their
+        high resolutions through the MJPG stream, so we request MJPG first.
+        """
         try:
             self.camera = cv2.VideoCapture(device_id)
             if not self.camera.isOpened():
                 return False
 
-            # Set resolution
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
+            # MJPG unlocks high-res modes on most USB webcams
+            try:
+                self.camera.set(cv2.CAP_PROP_FOURCC,
+                                cv2.VideoWriter_fourcc(*"MJPG"))
+            except Exception:
+                pass
+
+            # Request either the user-chosen size or the sensor maximum.
+            if self.config.cam_width > 0 and self.config.cam_height > 0:
+                req_w, req_h = self.config.cam_width, self.config.cam_height
+            else:
+                # Ask for something huge; OpenCV/driver clamps to the real max.
+                req_w, req_h = 4096, 2160
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, req_w)
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, req_h)
             self.camera.set(cv2.CAP_PROP_FPS, 30)
 
+            # Use the resolution the camera actually accepted
             self.src_w = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.src_h = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            if self.src_w <= 0 or self.src_h <= 0:
+                # Fallback: read one frame to learn the real size
+                ok, fr = self.camera.read()
+                if ok and fr is not None:
+                    self.src_h, self.src_w = fr.shape[:2]
 
             if self.config.sensor_type == SensorTypes.WEBCAM:
                 self.config.sensor_num_samples = self.src_w
@@ -764,6 +792,24 @@ class ThereminoSpectrometryGUI(QMainWindow):
 
         layout.addWidget(self.combo_video_device)
 
+        # Capture resolution — higher width = more spectral samples
+        res_row = QHBoxLayout()
+        res_row.addWidget(QLabel("Resolution:"))
+        self.combo_resolution = QComboBox()
+        # label -> (width, height); (0,0) = sensor maximum
+        self._resolution_options = [
+            ("Max (native)", (0, 0)),
+            ("3840 × 2160", (3840, 2160)),
+            ("1920 × 1080", (1920, 1080)),
+            ("1280 × 720", (1280, 720)),
+            ("640 × 480", (640, 480)),
+        ]
+        self.combo_resolution.addItems([o[0] for o in self._resolution_options])
+        self.combo_resolution.setToolTip(
+            "Higher width = higher spectral resolution.\nApplied on Connect.")
+        res_row.addWidget(self.combo_resolution)
+        layout.addLayout(res_row)
+
         self.btn_connect_webcam = QPushButton("Connect WebCam")
         self.btn_connect_webcam.clicked.connect(self.connect_webcam)
         layout.addWidget(self.btn_connect_webcam)
@@ -1045,12 +1091,18 @@ class ThereminoSpectrometryGUI(QMainWindow):
             self.label_webcam_fps.setText("FPS: -")
             self.statusBar().showMessage("Disconnected")
         else:
-            # Connect
+            # Connect — apply the chosen capture resolution first
+            w_req, h_req = self._resolution_options[self.combo_resolution.currentIndex()][1]
+            self.config.cam_width = w_req
+            self.config.cam_height = h_req
+
             device_id = self.combo_video_device.currentIndex()
             if self.spectrometer.connect_webcam(device_id):
                 self.is_connected = True
                 self.btn_connect_webcam.setText("Disconnect WebCam")
-                self.label_webcam_resolution.setText(f"Resolution: {self.spectrometer.src_w}x{self.spectrometer.src_h}")
+                self.label_webcam_resolution.setText(
+                    f"Resolution: {self.spectrometer.src_w}×{self.spectrometer.src_h}"
+                    f"  ({self.spectrometer.src_w} spectral samples)")
                 self.statusBar().showMessage(f"Connected to USB Camera {device_id}")
 
                 # Start acquisition thread
