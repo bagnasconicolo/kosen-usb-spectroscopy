@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox, QCheckBox, QDoubleSpinBox,
     QGroupBox, QFormLayout, QGridLayout, QTextEdit, QFileDialog, QLineEdit,
-    QMenuBar, QMenu, QMessageBox, QToolBar, QStatusBar, QScrollArea
+    QMenuBar, QMenu, QMessageBox, QToolBar, QStatusBar, QScrollArea, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QRect, QEvent
 from PyQt6.QtGui import QImage, QPixmap, QFont, QColor, QAction, QIcon, QPainter, QPen
@@ -587,45 +587,85 @@ class ThereminoSpectrometryGUI(QMainWindow):
         else:
             self.resize(1280, 800)
 
-        # Theme colors
+        # Dark "scientific instrument" theme with a teal accent
         self.setStyleSheet("""
-            QMainWindow { background-color: #f5f5f5; }
+            QMainWindow, QWidget { background-color: #0e1116; color: #e6edf3; }
+            QScrollArea { border: none; }
+
             QGroupBox {
-                border: 2px solid #0066cc;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: #333;
-                font-weight: bold;
+                background-color: #161b22;
+                border: 1px solid #2d333b;
+                border-radius: 8px;
+                margin-top: 14px;
+                padding: 10px 8px 8px 8px;
+                font-weight: 700;
+                font-size: 12px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
+                subcontrol-position: top left;
                 left: 10px;
-                padding: 0 3px 0 3px;
-            }
-            QPushButton {
-                background-color: #0066cc;
-                color: white;
-                border: none;
+                padding: 2px 8px;
+                color: #0e1116;
+                background-color: #2dd4bf;
                 border-radius: 4px;
+            }
+            /* Per-section accent colours (set via objectName) */
+            QGroupBox#grpVideo::title  { background-color: #58a6ff; }
+            QGroupBox#grpRoi::title    { background-color: #2dd4bf; }
+            QGroupBox#grpCalib::title  { background-color: #f0b429; }
+            QGroupBox#grpFilters::title{ background-color: #bc8cff; }
+            QGroupBox#grpSave::title   { background-color: #3fb950; }
+
+            QLabel { color: #c9d1d9; background: transparent; }
+
+            QPushButton {
+                background-color: #21262d;
+                color: #e6edf3;
+                border: 1px solid #30363d;
+                border-radius: 6px;
                 padding: 6px 12px;
-                font-weight: bold;
+                font-weight: 600;
             }
-            QPushButton:hover {
-                background-color: #0052a3;
+            QPushButton:hover  { background-color: #2d333b; border-color: #2dd4bf; }
+            QPushButton:pressed{ background-color: #16b8a3; color: #0e1116; }
+            QPushButton:checked{ background-color: #2dd4bf; color: #0e1116; border-color: #2dd4bf; }
+            QPushButton:disabled { color: #6e7681; border-color: #21262d; }
+
+            QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit, QTextEdit {
+                background-color: #0d1117;
+                color: #e6edf3;
+                border: 1px solid #30363d;
+                border-radius: 5px;
+                padding: 4px 6px;
+                selection-background-color: #2dd4bf;
+                selection-color: #0e1116;
             }
-            QPushButton:pressed {
-                background-color: #003d7a;
+            QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus,
+            QLineEdit:focus, QTextEdit:focus { border: 1px solid #2dd4bf; }
+            QComboBox QAbstractItemView {
+                background-color: #161b22; color: #e6edf3;
+                selection-background-color: #2dd4bf; selection-color: #0e1116;
             }
-            QSpinBox, QDoubleSpinBox, QComboBox {
-                border: 1px solid #0066cc;
-                border-radius: 3px;
-                padding: 3px;
-                background-color: white;
+
+            QCheckBox { color: #c9d1d9; spacing: 6px; }
+            QCheckBox::indicator {
+                width: 15px; height: 15px; border-radius: 4px;
+                border: 1px solid #30363d; background: #0d1117;
             }
-            QLabel {
-                color: #333;
-            }
+            QCheckBox::indicator:checked { background: #2dd4bf; border-color: #2dd4bf; }
+
+            QMenuBar { background-color: #161b22; color: #e6edf3; }
+            QMenuBar::item:selected { background: #2dd4bf; color: #0e1116; }
+            QMenu { background-color: #161b22; color: #e6edf3; border: 1px solid #2d333b; }
+            QMenu::item:selected { background: #2dd4bf; color: #0e1116; }
+
+            QToolBar { background: #161b22; border-bottom: 1px solid #2d333b; spacing: 4px; }
+            QStatusBar { background: #161b22; color: #8b949e; }
+            QScrollBar:vertical { background: #0e1116; width: 12px; margin: 0; }
+            QScrollBar::handle:vertical { background: #30363d; border-radius: 6px; min-height: 24px; }
+            QScrollBar::handle:vertical:hover { background: #2dd4bf; }
+            QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
         """)
 
         self.config = SpectrometerConfig()
@@ -781,6 +821,7 @@ class ThereminoSpectrometryGUI(QMainWindow):
     def create_video_input_groupbox(self) -> QGroupBox:
         """Video input device selection"""
         group = QGroupBox("Video Input Device")
+        group.setObjectName("grpVideo")
         layout = QVBoxLayout()
 
         layout.addWidget(QLabel("Device:"))
@@ -825,6 +866,7 @@ class ThereminoSpectrometryGUI(QMainWindow):
     def create_input_groupbox(self) -> QGroupBox:
         """Input/ROI group"""
         group = QGroupBox("ROI (Sensor Samples)")
+        group.setObjectName("grpRoi")
         layout = QFormLayout()
         layout.setSpacing(2)
 
@@ -880,6 +922,7 @@ class ThereminoSpectrometryGUI(QMainWindow):
     def create_filters_groupbox(self) -> QGroupBox:
         """Filters group"""
         group = QGroupBox("Filters")
+        group.setObjectName("grpFilters")
         layout = QFormLayout()
         layout.setSpacing(2)
 
@@ -911,6 +954,7 @@ class ThereminoSpectrometryGUI(QMainWindow):
     def create_calibration_groupbox(self) -> QGroupBox:
         """Calibration group"""
         group = QGroupBox("Wavelength Calibration")
+        group.setObjectName("grpCalib")
         layout = QFormLayout()
         layout.setSpacing(2)
 
@@ -959,6 +1003,7 @@ class ThereminoSpectrometryGUI(QMainWindow):
     def create_save_groupbox(self) -> QGroupBox:
         """Save/File group"""
         group = QGroupBox("Save Image")
+        group.setObjectName("grpSave")
         layout = QVBoxLayout()
 
         # Measurement title (prefisso filename)
@@ -1000,13 +1045,23 @@ class ThereminoSpectrometryGUI(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        # Spectrum plot (60% height)
+        # Spectrum plot (60% height) - dark scientific styling
+        pg.setConfigOptions(antialias=True)
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setLabel('bottom', 'Wavelength', units='nm')
-        self.plot_widget.setLabel('left', 'Intensity')
-        self.plot_widget.setTitle("Spectrum")
-        self.plot_widget.setBackground('w')
-        self.spectrum_curve = self.plot_widget.plot(pen=pg.mkPen('b', width=2))
+        self.plot_widget.setBackground('#0d1117')
+        axis_pen = pg.mkPen('#8b949e')
+        text_pen = {'color': '#c9d1d9', 'font-size': '10pt'}
+        for ax in ('bottom', 'left'):
+            self.plot_widget.getAxis(ax).setPen(axis_pen)
+            self.plot_widget.getAxis(ax).setTextPen('#c9d1d9')
+        self.plot_widget.setLabel('bottom', 'Wavelength', units='nm', **text_pen)
+        self.plot_widget.setLabel('left', 'Intensity', **text_pen)
+        self.plot_widget.setTitle("Spectrum", color='#e6edf3', size='12pt')
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.15)
+        # Accent curve with a soft fill under it
+        self.spectrum_curve = self.plot_widget.plot(
+            pen=pg.mkPen('#2dd4bf', width=2),
+            fillLevel=0, brush=(45, 212, 191, 40))
 
         # Lock the plot: not draggable/zoomable. It auto-fits the data (ROI)
         # in real time; the cursor is ONLY for reading coordinates.
@@ -1018,11 +1073,12 @@ class ThereminoSpectrometryGUI(QMainWindow):
         self.plot_widget.setMouseTracking(True)
 
         # Read-only crosshair cursor (hidden until the mouse hovers the plot)
-        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('r', width=1, style=Qt.PenStyle.DashLine))
-        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('r', width=1, style=Qt.PenStyle.DashLine))
+        cur_pen = pg.mkPen('#f0b429', width=1, style=Qt.PenStyle.DashLine)
+        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=cur_pen)
+        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=cur_pen)
         self.plot_widget.addItem(self.vline, ignoreBounds=True)
         self.plot_widget.addItem(self.hline, ignoreBounds=True)
-        self.cursor_label = pg.TextItem(text="", anchor=(0, 1), color=(200, 0, 0))
+        self.cursor_label = pg.TextItem(text="", anchor=(0, 1), color='#f0b429')
         self.plot_widget.addItem(self.cursor_label)
         self._set_plot_cursor_visible(False)
 
@@ -1038,24 +1094,28 @@ class ThereminoSpectrometryGUI(QMainWindow):
         # Zoomed ROI strip: exactly what feeds the spectrum, stretched to a
         # fixed height so the bright band is easy to see/align. Visual aid only
         # (does NOT change the spectrum data).
-        roi_strip_label = QLabel("ROI (zoom — what the spectrum is averaged from):")
-        roi_strip_label.setStyleSheet("font-weight: bold;")
+        roi_strip_label = QLabel("ROI zoom — pixels averaged into the spectrum")
+        roi_strip_label.setStyleSheet("font-weight: 700; color: #2dd4bf;")
         preview_layout.addWidget(roi_strip_label)
         self.label_roi_strip = QLabel()
         self.label_roi_strip.setFixedHeight(70)
-        self.label_roi_strip.setStyleSheet("border: 2px solid #0066cc; background: black;")
+        self.label_roi_strip.setStyleSheet("border: 1px solid #2dd4bf; border-radius: 4px; background: #0d1117;")
         self.label_roi_strip.setScaledContents(True)
+        # Ignore the pixmap's natural width so a wide ROI can't stretch the panel
+        self.label_roi_strip.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                           QSizePolicy.Policy.Fixed)
+        self.label_roi_strip.setMinimumWidth(0)
         preview_layout.addWidget(self.label_roi_strip)
 
-        preview_label = QLabel("Camera Preview (with ROI):")
-        preview_label.setStyleSheet("font-weight: bold;")
+        preview_label = QLabel("Live camera preview — click to place ROI")
+        preview_label.setStyleSheet("font-weight: 700; color: #58a6ff;")
         preview_layout.addWidget(preview_label)
 
         # Preview label with aspect ratio maintained + interactive cursor
         self.label_preview = InteractivePreviewLabel()
         self.label_preview.setMinimumSize(400, 300)
         self.label_preview.setMaximumHeight(400)
-        self.label_preview.setStyleSheet("border: 2px solid #888; background: black;")
+        self.label_preview.setStyleSheet("border: 1px solid #58a6ff; border-radius: 4px; background: #0d1117;")
         self.label_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_preview.setScaledContents(False)
         self.label_preview.pixel_clicked.connect(self.on_preview_clicked)
@@ -1173,9 +1233,10 @@ class ThereminoSpectrometryGUI(QMainWindow):
         band = rgb[y0:y1, x0:x1]
         if band.size == 0:
             return
-        # Stretch to the strip's fixed height, keep full ROI width
+        # Stretch to the strip's fixed height; cap width (scaledContents fills
+        # the label horizontally, so a huge pixmap is pointless and memory-heavy)
         target_h = self.label_roi_strip.height() or 70
-        target_w = max(band.shape[1], 400)
+        target_w = int(min(max(band.shape[1], 400), 1000))
         strip = cv2.resize(band, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
         strip = np.ascontiguousarray(strip)
         img = QImage(strip.data, strip.shape[1], strip.shape[0],
